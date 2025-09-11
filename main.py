@@ -15,6 +15,7 @@ import streamlit as st
 import tempfile
 import os
 from streamlit_extras.buy_me_a_coffee import button
+from langchain.callbacks.base import BaseCallbackHandler
 # from dotenv import load_dotenv
 # load_dotenv()
 
@@ -70,6 +71,15 @@ if uploaded_file is not None:
     # Chroma DB
     db = Chroma.from_documents(texts, embeddings_model)
 
+    # 스트리밍 처리할 Handler 생성
+    class StreamHandler(BaseCallbackHandler):
+        def __init__(self, container, initial_text=""):
+            self.container = container
+            self.text = initial_text
+        def on_llm_new_token(self, token: str, **kwargs) -> None:
+            self.text += token
+            self.container.markdown(self.text)
+
     # User Input
     st.header("PDF에게 질문해보세요!")
     question = st.text_input("질문을 입력해주세요!")
@@ -77,7 +87,7 @@ if uploaded_file is not None:
     if st.button("질문하기"):
         with st.spinner("Wait for it..."):
             # Retriever
-            llm = ChatOpenAI(model='gpt-5-nano', temperature=0)
+            llm = ChatOpenAI(model='gpt-5-nano', temperature=0, openai_api_key=openai_key)
             retriever_from_llm = MultiQueryRetriever.from_llm(
                 retriever=db.as_retriever(),
                 llm=llm,
@@ -87,6 +97,10 @@ if uploaded_file is not None:
             prompt = hub.pull("rlm/rag-prompt")
 
             # Generate
+            chat_box = st.empty()
+            stream_handler = StreamHandler(chat_box)
+            gemerate_llm = ChatOpenAI(model='gpt-5-nano', temperature=0, openai_api_key=openai_key, streaming=True, callbacks=[stream_handler])
+
             def format_docs(docs):
                 return "\n\n".join(doc.page_content for doc in docs)
 
@@ -94,7 +108,7 @@ if uploaded_file is not None:
                 {"context": retriever_from_llm | format_docs,
                 "question": RunnablePassthrough()}
                 | prompt
-                | llm
+                | gemerate_llm
                 | StrOutputParser()
             )
 
